@@ -1,0 +1,65 @@
+---
+- hosts: squid
+  become: true
+  become_user: root
+  tasks:
+  - name: Update apt
+    ansible.builtin.apt: 
+      update_cache: yes
+      cache_valid_time: 3600
+
+  - name: Upgrade packages
+    ansible.builtin.apt: 
+      name: "*"
+      state: latest
+
+  - name: Check if reboot is needed
+    register: reboot_required_file
+    stat: 
+      path: /var/run/reboot-required 
+      get_md5: no
+
+  - name: Reboot
+    reboot:
+      msg: "Reboot initiated by Ansible"
+      connect_timeout: 5
+      reboot_timeout: 300
+      pre_reboot_delay: 0
+      post_reboot_delay: 300
+      test_command: uptime
+    when: reboot_required_file.stat.exists
+  
+  - name: Ensure Squid is installed
+    ansible.builtin.apt:
+      name: squid
+      state: present
+      update_cache: yes
+
+  - name: Ensure Squid is listening on 0.0.0.0
+    ansible.builtin.lineinfile:
+      path: /etc/squid/squid.conf
+      regexp: '^http_port 3128$'
+      line: 'http_port 0.0.0.0:3128'
+
+  - name: Ensure home is allowed to connect
+    ansible.builtin.lineinfile:
+      path: /etc/squid/squid.conf
+      insertbefore: '^http_access deny all$'
+      firstmatch: yes
+      line: |
+        acl localnet src <THE CIDR YOU WANT TO CONNECT FROM>
+        http_access allow localnet
+
+  - name: Ensure Local Network is allowed to connect
+    ansible.builtin.copy:
+      dest: /etc/squid/conf.d/custom.conf
+      src: custom.conf
+      owner: root
+      group: root
+      mode: '0644'
+  
+  - name: Ensure Squid is Enabled and Running
+    ansible.builtin.systemd:
+      name: squid
+      state: restarted
+      enabled: true
